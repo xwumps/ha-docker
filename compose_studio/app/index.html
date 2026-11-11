@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="compose-token" content="__CS_TOKEN__">
+  <title>Compose Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header><div class="brand">▦ <span>Compose Studio</span></div><span id="version">Docker Compose V2</span></header>
+  <main>
+    <aside>
+      <div class="aside-head"><h2>Projekte</h2><button id="new" title="Neues Projekt">＋ Neu</button></div>
+      <nav id="projects" aria-label="Compose-Projekte"></nav>
+      <p class="muted">Jedes Projekt hat eine eigene Compose-Datei und eigene Umgebungsvariablen.</p>
+      <p class="muted">Host-Verzeichnis<br><code id="root">Wird geladen …</code></p>
+    </aside>
+    <section class="workspace">
+      <div class="heading"><div><p class="eyebrow">DEINE DOCKER-UMGEBUNG</p><h1 id="title">Neues Projekt</h1></div><span id="dirty" class="badge">Entwurf</span></div>
+      <div class="notice">Diese App steuert die Docker-Engine deines HA-Hosts. Verwende vertrauenswürdige Compose-Dateien. Eigene Container und deren Volumes werden nicht automatisch vom Supervisor verwaltet oder gesichert.</div>
+      <label class="field">Projektname <input id="name" placeholder="z. B. mein-webserver" maxlength="40" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9_-]{0,39}"></label>
+      <div class="editor-grid">
+        <label class="field">compose.yaml <textarea id="compose" spellcheck="false" aria-label="Docker Compose YAML"></textarea></label>
+        <label class="field">.env <textarea id="env" spellcheck="false" aria-label="Umgebungsvariablen"></textarea><span class="muted">Werte werden im Projekt gespeichert. Keine Geheimnisse in Screenshots oder geteilte Logs übernehmen.</span></label>
+      </div>
+      <p class="muted" id="location">Speichere zuerst dein Projekt.</p>
+      <div class="toolbar">
+        <button id="save" class="primary">Speichern</button>
+        <button data-action="validate">Prüfen</button>
+        <button data-action="up" class="accent">▶ Start / Anwenden</button>
+        <button data-action="stop">■ Stoppen</button>
+        <button data-action="restart">Neustarten</button>
+        <button data-action="pull">Images laden</button>
+        <button data-action="ps">Status</button>
+        <button data-action="logs">Logs</button>
+        <button data-action="down" class="danger">Container entfernen</button>
+      </div>
+      <p class="muted">Updates: „Images laden“, anschließend „Start / Anwenden“. „Container entfernen“ führt <code>compose down</code> aus und behält benannte Volumes. Ein App-Stopp stoppt deine Projekte nicht.</p>
+      <div id="message" role="status" aria-live="polite"></div>
+      <div class="console-head"><h2>Ausgabe</h2><span id="job-status">Bereit</span></div>
+      <pre id="output" tabindex="0">Erstelle ein Projekt oder wähle links ein vorhandenes aus.</pre>
+    </section>
+  </main>
+</body>
+</html>

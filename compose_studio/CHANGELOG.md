@@ -1,3 +1,12 @@
+# 0.3.0
+
+- Neuer nativer Docker-Bereich ohne Compose-Datei: Formulare, docker run-Import, Container starten/stoppen/neustarten/entfernen, Status, Logs und nicht interaktives docker exec.
+- Dockerfile-Kontexte als Archiv importieren; Dateien, Build-Argumente und Build-Targets verwalten; Images mit Docker Buildx bauen.
+- Persistente native Volumes einschließlich automatisch zugeordneter Image-VOLUME-Pfade im App-Speicher.
+- Native Container werden zusammen mit Compose-Projekten für HA-Backups und App-Stopps angehalten und anschließend fortgesetzt.
+- Eigene/lokale native Images werden für HA-Backups exportiert und beim Restore geladen; Wiederanlauf nutzt die zuletzt angewendete Konfiguration.
+- Anzeigename jetzt „Docker Studio“; bestehender Slug `compose_studio` und bestehende Compose-Projekte bleiben nutzbar.
+
 # 0.2.0
 
 - Jotion-Assistent: Release-Paket, Zusatzdateien, feste Image-Version und automatisch erzeugte Schlüssel ohne Shellskript-Ausführung.

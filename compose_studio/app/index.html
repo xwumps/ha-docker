@@ -4,21 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="compose-token" content="__CS_TOKEN__">
-  <title>Compose Studio</title>
+  <title>Docker Studio</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="app.js"></script>
 </head>
 <body>
-  <header><div class="brand">▦ <span>Compose Studio</span></div><span id="version">Docker Compose V2</span></header>
+  <header><div class="brand">▦ <span>Docker Studio</span></div><span id="version">Docker &amp; Compose V2</span></header>
   <main>
     <aside>
-      <div class="aside-head"><h2>Projekte</h2><button id="new" title="Neues Projekt">＋ Neu</button></div>
+      <div class="aside-head"><h2>Docker-Container</h2><button id="new-docker">＋ Neu</button></div>
+      <nav id="docker-list" aria-label="Docker-Container"></nav>
+      <div class="aside-head"><h2>Compose-Projekte</h2><button id="new" title="Neues Compose-Projekt">＋ Neu</button></div>
       <button id="open-install" class="install-button">↓ Installieren / Importieren</button>
       <nav id="projects" aria-label="Compose-Projekte"></nav>
       <p class="muted">Jedes Projekt hat eine eigene Compose-Datei und eigene Umgebungsvariablen.</p>
-      <p class="muted">Host-Verzeichnis<br><code id="root">Wird geladen …</code></p>
+      <p class="muted">Compose-Verzeichnis<br><code id="root">Wird geladen …</code></p>
     </aside>
     <section class="workspace">
+      <div id="compose-view">
       <div class="heading"><div><p class="eyebrow">DEINE DOCKER-UMGEBUNG</p><h1 id="title">Neues Projekt</h1></div><span id="dirty" class="badge">Entwurf</span></div>
       <div class="notice">Verwaltete lokale Volume-Daten liegen im App-Datenordner und werden beim HA-Backup dieser App mitgesichert. Während der Sicherung und bei einem App-Stopp pausieren die Projekte. Die App hat weitreichende Docker-Rechte.</div>
       <details id="install-panel" class="import-panel">
@@ -67,6 +70,76 @@
         <button data-action="down" class="danger">Container entfernen</button>
       </div>
       <p class="muted">Updates: „Images laden“, anschließend „Start / Anwenden“. „Container entfernen“ behält persistente Daten. Ein App-Stopp stoppt die laufenden Projekte; beim App-Start werden sie fortgesetzt. Für HA-Backups diese App in der Sicherung auswählen.</p>
+      </div>
+      <div id="docker-view" hidden>
+        <div class="heading"><div><p class="eyebrow">DOCKER OHNE COMPOSE-DATEI</p><h1 id="docker-title">Neuer Docker-Container</h1></div><span id="docker-dirty" class="badge">Entwurf</span></div>
+        <div class="notice">Container werden direkt mit Docker verwaltet. Lokale Volume-Daten und eigene Image-Sicherungen liegen im App-Datenordner. App-Stopp und HA-Backup pausieren laufende Container.</div>
+        <details class="import-panel" id="run-panel">
+          <summary>docker run-Befehl übernehmen</summary>
+          <label class="field">Befehl aus einer Installationsanleitung<textarea id="docker-run" class="short-editor" spellcheck="false" placeholder="docker run -d --name web -p 8090:80 nginx:alpine"></textarea></label>
+          <button id="parse-run">In Formular übernehmen</button>
+          <p class="muted">Der Befehl wird eingelesen; er wird hier noch nicht ausgeführt. Nicht unterstützte Optionen werden angezeigt. Keine Shell-Verkettungen oder Host-Variablenauflösung.</p>
+        </details>
+        <details class="import-panel" id="docker-import-panel">
+          <summary>Dockerfile-Projekt importieren</summary>
+          <form id="docker-archive-form">
+            <div class="import-grid"><label class="field">Containername<input id="docker-import-name" placeholder="meine-app" required maxlength="40" pattern="[a-z][a-z0-9_-]{0,39}"></label><label class="field">ZIP / TAR.GZ mit Dockerfile<input id="docker-archive" type="file" accept=".zip,.tar,.tar.gz,.tgz" required></label></div>
+            <label class="field">Dockerfile-Pfad im Projekt<input id="docker-import-dockerfile" value="Dockerfile" placeholder="z. B. docker/Dockerfile" required></label>
+            <button type="submit">Build-Projekt importieren</button>
+          </form>
+        </details>
+        <div class="import-grid">
+          <label class="field">Containername<input id="docker-name" placeholder="mein-webserver" maxlength="40" pattern="[a-z][a-z0-9_-]{0,39}"></label>
+          <label class="field">Docker-Image<input id="docker-image" placeholder="nginx:alpine" spellcheck="false"></label>
+        </div>
+        <div class="import-grid">
+          <label class="field">Ports · je eine Zuordnung pro Zeile<textarea id="docker-ports" class="short-editor" placeholder="8090:80" spellcheck="false"></textarea></label>
+          <label class="field">Umgebungsvariablen · NAME=WERT<textarea id="docker-env" class="short-editor" placeholder="TZ=Europe/Berlin" spellcheck="false"></textarea></label>
+        </div>
+        <label class="field">Persistente Mounts · je eine Zuordnung pro Zeile<textarea id="docker-mounts" class="short-editor" placeholder="meine-daten:/data&#10;./config.json:/app/config.json:ro" spellcheck="false"></textarea><span class="muted">Benannte Volumes werden im App-Speicher verwaltet. Gleiche Namen teilen Daten zwischen nativen Containern. ./pfad bezieht sich auf den eigenen Kontextordner.</span></label>
+        <label class="field">Startbefehl · leer für den Image-Standard<input id="docker-command" placeholder='z. B. sh -c "echo Hallo; sleep 300"' spellcheck="false"></label>
+        <div class="import-grid">
+          <label class="field">Neustartregel<select id="docker-restart"><option>unless-stopped</option><option>always</option><option>on-failure</option><option>no</option></select></label>
+          <label class="field">Netzwerk<input id="docker-network" value="bridge" placeholder="bridge, host, none oder vorhandener Netzwerkname"></label>
+        </div>
+        <details class="import-panel" id="docker-build-panel">
+          <summary>Dockerfile / eigener Image-Build</summary>
+          <label class="check"><input id="docker-build" type="checkbox"> Image aus dem hochgeladenen Kontext bauen</label>
+          <div class="import-grid"><label class="field">Dockerfile-Pfad<input id="docker-dockerfile" value="Dockerfile"></label><label class="field">Build-Target · optional<input id="docker-target" placeholder="z. B. production"></label></div>
+          <label class="field">Build-Argumente · NAME=WERT<textarea id="docker-build_args" class="short-editor" spellcheck="false"></textarea></label>
+          <p class="muted">„Start / Anwenden“ baut ein fehlendes Image. Nach Quellcode-Änderungen „Image bauen“ und danach „Start / Anwenden“. Eigene Images werden als TAR im App-Datenordner für HA-Backups gespeichert.</p>
+        </details>
+        <details class="import-panel">
+          <summary>Erweiterte Docker-Optionen</summary>
+          <div class="import-grid">
+            <label class="field">Entrypoint<input id="docker-entrypoint"></label><label class="field">Benutzer<input id="docker-user" placeholder="1000:1000"></label>
+            <label class="field">Arbeitsverzeichnis<input id="docker-workdir" placeholder="/app"></label><label class="field">Hostname<input id="docker-hostname"></label>
+            <label class="field">Arbeitsspeicher-Limit<input id="docker-memory" placeholder="256m"></label><label class="field">CPU-Limit<input id="docker-cpus" placeholder="1.0"></label>
+            <label class="field">Capabilities hinzufügen · je eine pro Zeile<textarea id="docker-cap_add" class="short-editor"></textarea></label><label class="field">Capabilities entfernen<textarea id="docker-cap_drop" class="short-editor"></textarea></label>
+            <label class="field">Geräte · je ein /dev/-Pfad pro Zeile<textarea id="docker-devices" class="short-editor" placeholder="/dev/ttyUSB0:/dev/ttyUSB0"></textarea></label><label class="field">Zusätzliche Hosts<textarea id="docker-add_hosts" class="short-editor" placeholder="name:192.168.1.20"></textarea></label>
+            <label class="field">DNS-Server<textarea id="docker-dns" class="short-editor"></textarea></label><label class="field">tmpfs · flüchtiger Speicher<textarea id="docker-tmpfs" class="short-editor" placeholder="/tmp"></textarea></label>
+            <label class="field">Labels · NAME=WERT<textarea id="docker-labels" class="short-editor"></textarea></label><label class="field">Image-Laderegel<select id="docker-pull_policy"><option value="missing">Bei fehlendem Image laden</option><option value="always">Vor dem Anwenden laden</option><option value="never">Nur lokal vorhandenes Image</option></select></label>
+          </div>
+          <label class="check"><input id="docker-read_only" type="checkbox"> Container-Dateisystem schreibgeschützt</label>
+          <label class="check"><input id="docker-init" type="checkbox"> Docker-Init verwenden (Signalweiterleitung und Kindprozesse)</label>
+          <label class="check"><input id="docker-privileged" type="checkbox"> Privilegierter Container (weitreichender Host-Zugriff)</label>
+          <p class="muted">Geräte und der Docker-Socket sind Host-Ressourcen und keine gesicherten Nutzdaten. Andere absolute Host-Datenpfade werden abgewiesen.</p>
+        </details>
+        <details class="import-panel" id="docker-files-panel" hidden>
+          <summary>Dateien im Container-/Build-Kontext</summary>
+          <ul id="docker-files" class="file-list"></ul>
+          <form id="docker-file-form"><div class="import-grid"><label class="field">Datei (bis 2 MiB)<input id="docker-extra-file" type="file" required></label><label class="field">Pfad im Kontext<input id="docker-extra-path" placeholder="Dockerfile oder config.json" required></label></div><label class="check"><input id="docker-extra-executable" type="checkbox"> Datei ausführbar machen (z. B. entrypoint.sh)</label><button type="submit">Datei speichern / ersetzen</button></form>
+        </details>
+        <p id="docker-location" class="muted">Konfiguration zuerst speichern.</p>
+        <div class="toolbar">
+          <button id="docker-save" class="primary">Container speichern</button><button data-native-action="up" class="accent">▶ Start / Anwenden</button>
+          <button data-native-action="stop">■ Stoppen</button><button data-native-action="restart">Neustarten</button>
+          <button data-native-action="pull">Image laden</button><button data-native-action="build">Image bauen</button>
+          <button data-native-action="status">Status</button><button data-native-action="logs">Logs</button><button data-native-action="remove" class="danger">Container entfernen</button>
+        </div>
+        <p class="muted">Container entfernen behält die Konfiguration und persistenten Daten. Daten nur in der beschreibbaren Container-Schicht sind nicht Bestandteil des App-Backups.</p>
+        <details class="import-panel"><summary>Befehl im Container ausführen · docker exec</summary><label class="field">Befehl<input id="docker-exec" placeholder="z. B. ls -la /data"></label><button id="docker-exec-button" data-native-action="exec">Ausführen</button><p class="muted">Nicht interaktiv; Ausgabe erscheint nach Abschluss. Shell-Ausdrücke bei Bedarf explizit mit sh -c ausführen. Der Befehl läuft im gewählten Container.</p></details>
+      </div>
       <div id="message" role="status" aria-live="polite"></div>
       <div class="console-head"><h2>Ausgabe</h2><span id="job-status">Bereit</span></div>
       <pre id="output" tabindex="0">Erstelle ein Projekt oder wähle links ein vorhandenes aus.</pre>

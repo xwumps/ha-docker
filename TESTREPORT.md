@@ -1,25 +1,46 @@
-# Prüfstand für Version 0.2.0
+# Prüfstand für Version 0.3.0
 
-Geprüft am 11. November 2026 in einer Linux-amd64-Cloud-Entwicklungsumgebung mit echter lokaler Docker-Engine. **Nicht direkt auf einem Home-Assistant-OS-System oder auf aarch64 installiert/getestet.** Die App bleibt experimentell.
+Geprüft am 11. November 2026 in einer Linux-amd64-Cloud-Entwicklungsumgebung mit echter lokaler Docker-Engine. **Nicht direkt auf Home Assistant OS oder aarch64 installiert/getestet.** Die App bleibt experimentell.
 
-## Bestanden
+## Automatisierte Tests
 
-- Docker-Image aus dem mitgelieferten Dockerfile gebaut; Compose **V2.40.3**.
-- **18 Python-Tests**: bestehende Zugriffs-/Projektgrenzen sowie Archivimport mit Zusatzdateien, Pfadüberschreitungen, ZIP-Symlinks, TAR-Hardlinks, Größenprüfung vor dem Entpacken eines TAR-Mitglieds, reservierte Dateien, Datei-Upload über Symlink-Eltern, eindeutige Jotion-Schlüssel, Image-Pinning, lokale Volume-Speicherpfade, Abweisen externer/anonymer Speichervorgaben, Rücknahme eines teilweise gescheiterten Volume-Kopiervorgangs, Pfadwechsel bei Restore, prozessübergreifende Sperre und Backup-Marker.
-- Echter Compose-Betrieb über simulierten HA-Ingress mit Quell-IP `172.30.32.2` und verschachteltem URL-Präfix: Validieren, Starten, Status, Logs, Stoppen, Neustarten und Entfernen der Container.
-- Tatsächliches Schreiben durch einen relativen Bind-Mount und `.env`-Interpolation.
-- Lokale Volume-Hülle mit Bind-Treiber: Nutzdaten liegen tatsächlich unter dem App-Datenpfad.
-- Backup-Hooks in der Reihenfolge des Supervisors ausgeführt: Container gestoppt, Bearbeitung während des Backups abgewiesen, App-Daten als TAR gesichert und Projekte anschließend fortgesetzt.
-- Wiederherstellung dieses App-Datenarchivs in einen **anderen Host-Datenpfad**: Volume-Inhalte und Bind-Dateien erhalten, neue Volume-Hüllen auf den neuen Pfad eingerichtet, `.env` erhalten und vorher aktives Projekt automatisch gestartet. Alte Docker-Volumes blieben beim Test absichtlich bestehen, damit ein fälschlicher Rückgriff auf diese auffällt.
-- Übernahme eines echten alten Compose-Volumes: Dateiinhalt, UID 123, GID 456 und Modus 640 nach der Kopie erhalten. Änderung im neuen Speicher verändert das ursprüngliche Volume nicht.
-- Geordneter App-Stopp mit zwei aktiven Projekten: beide gestoppt; neue App-Instanz setzt beide fort.
-- Chromium, Desktop (1440 px) und Mobil (390 px): Archivimport, erhaltene Zusatzdateien, weiterer Datei-Upload, Validierung, Sperre bei ungespeicherten Änderungen, echter Start eines importierten Busybox-Projekts und Logs. Keine JavaScript-Seitenfehler; kein horizontaler Seitenüberlauf auf Mobil.
-- Echtes Jotion-v1.0.1-Release-Paket heruntergeladen, GitHub-SHA256 geprüft, Caddyfile und Betriebsdateien übernommen, Schlüssel erzeugt und Image-Version eingetragen. HTTP-API-Import mit Cloud-CA-Vertrauen sowie Jotion-Einrichtung über das Browserformular geprüft; die erzeugte Konfiguration und Caddyfile sind anschließend wieder abrufbar.
-- JavaScript-Syntax und App-/Repository-YAML geprüft.
+**32 Python-Tests bestanden.** Bestehende Zugriffs-/Projektgrenzen, sicherer ZIP/TAR-Import, Pfad-/Symlink-/Hardlink-Grenzen, Größenbegrenzung, Jotion-Schlüssel, Volume-Migration und Restore-Pfade sowie zusätzliche native Docker-Prüfungen:
+
+- docker run-Parser mit Ports, Variablen, Quotes, Mehrzeilenbefehlen, Neustartregeln und --mount; Host-Variablen werden nicht ausgewertet.
+- Nicht unterstützte Flags, Host-Shell-Verkettungen, fremde Datenpfade, interne Labels und doppelte Mount-Ziele werden abgewiesen.
+- Dockerfile-Archivimport ohne Compose, eigener Dockerfile-Pfad, erhaltene ausführbare Skriptrechte und Entfernen von Setuid-Bits.
+- Upload über Symlink-Eltern wird abgewiesen; ausführbare Uploads und vorhandene Rechte bleiben korrekt.
+- Native Befehle verwenden Docker container create; implizite Image-VOLUME-Ziele werden persistent zugeordnet.
+- Fremde Container mit kollidierendem Namen können nicht entfernt werden und werden im Backup-Inventar nicht als eigene Container behandelt.
+- Ein abgebrochener Create-Schritt ohne gestarteten Container blockiert kein Backup.
+- Wiederanlauf verwendet die zuletzt angewendete native Konfiguration; offene Entwürfe werden nicht angewendet.
+- Fehlgeschlagener Image-Export hinterlässt kein scheinbar fertiges Backup-Image.
+
+## Echte Docker-Integration bestanden
+
+- App-Image gebaut, Docker-CLI mit Compose **V2.40.3** und Buildx **v0.29.1** geprüft.
+- Home-Assistant-Ingress nachgestellt: Quell-IP 172.30.32.2, verschachtelter URL-Präfix, direkter Zugriff abgewiesen.
+- Compose-Regression: Validierung, Start, relative Bind-Mounts, .env-Interpolation, Status, Logs, Stop, Restart und Down mit erhaltenem Volume.
+- Nativer docker run-Import über die HTTP-API; echter Container mit erreichbarem HTTP-Port, Variablen und benanntem persistentem Volume gestartet.
+- Native Logs, Status, Stop/Restart und docker exec ausgeführt.
+- Dockerfile-ZIP mit COPY eines ausführbaren entrypoint.sh und RUN dieses Skripts gebaut; Dateirechte im echten Build nachgewiesen. Container gestartet, Build-/Kontextdateien gelesen und implizites Image-VOLUME persistent verwendet.
+- Eigenes Image als TAR im App-Datenordner gesichert.
+- Backup-Hooks stoppen Compose- und native Container gemeinsam und sperren Änderungen; App-Daten als TAR gesichert und Dienste danach fortgesetzt.
+- Danach Daten verändert, native Container entfernt und das selbst gebaute Image aus Docker entfernt.
+- Backup in einen anderen Host-Datenpfad wiederhergestellt; Dockerfile im wiederhergestellten Kontext absichtlich ungültig gemacht, um einen zufällig erfolgreichen Neuaufbau auszuschließen.
+- Wiederanlauf lädt das exakte eigene Image aus dem Backup, stellt Daten/implizite Volumes wieder her und verwendet den vorher angewendeten Variablenwert. Der gespeicherte, noch nicht angewendete Entwurf bleibt separat erhalten. Compose-Bind-Pfade werden ebenfalls angepasst.
+
+## Browserprüfung
+
+Chromium auf Desktop (1440 px) und Mobil (390 px): Native Standardansicht, docker run ins Formular übernehmen, speichern/starten, Logs, Sperre bei ungespeicherten Änderungen, erneutes Laden, Dockerfile-Archivimport, Build/Start und docker exec bestanden. Keine JavaScript-Seitenfehler, kein horizontaler Seitenüberlauf auf Mobil.
+
+Zusätzlicher Browserlauf auf dem endgültigen Stand bestanden: eigener Dockerfile-Pfad `docker/Dockerfile`, ausführbares Archiv-Skript unter Image-USER 1000, ausführbarer Einzeldatei-Upload, expliziter Neubau und Anwenden, Logs und Desktop-/Mobilansicht. Keine JavaScript-Seitenfehler.
+
+Compose-Browserablauf nach der Erweiterung ebenfalls bestanden: Archivimport, Zusatzdatei-Upload, Validierung, Speichern, Start, Logs und Desktop-/Mobilansicht.
 
 ## Nicht als bestanden zu werten
 
-**Vollständiger Jotion-Start:** Der Versuch wurde durchgeführt, scheiterte aber beim Entpacken der offiziellen Container-Images mit `no space left on device`. Die Testumgebung hat insgesamt rund 8 GB und verwendet den speicherintensiven Docker-VFS-Treiber. Jotion-Datenbankmigrationen, Weboberfläche und der vollständige Jotion-Stack konnten in dieser Umgebung deshalb nicht abschließend geprüft werden. Das ist eine konkrete Testgrenze; ein erfolgreicher Komplettbetrieb wird nicht behauptet.
+**Vollständiger Jotion-Start:** Beim Test der Version 0.2 wurde der Versuch durchgeführt, scheiterte aber beim Entpacken der offiziellen Container-Images mit `no space left on device`. Die Testumgebung hat insgesamt rund 8 GB und verwendet den speicherintensiven Docker-VFS-Treiber. Jotion-Datenbankmigrationen, Weboberfläche und der vollständige Jotion-Stack konnten in dieser Umgebung deshalb nicht abschließend geprüft werden. Das ist eine konkrete Testgrenze; ein erfolgreicher Komplettbetrieb wird nicht behauptet.
 
 **Echter HA-Supervisor:** Die Hook-Reihenfolge wurde gegen den aktuellen Supervisor-Quellcode geprüft und mit Docker nachgestellt. Store-Erkennung, Installation, AppArmor, tatsächliche HA-Backup-Datei und deren Restore auf HA OS stehen noch aus. Ebenso aarch64 und reale Fremdprojekte mit anderen Speicheranforderungen.
 

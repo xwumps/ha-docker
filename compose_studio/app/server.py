@@ -231,19 +231,10 @@ class Workspace:
         finally:
             self.lock.release()
 
-    def start(self, name, action):
-        commands = {
-            'validate': ['config', '--quiet'], 'up': ['up', '-d', '--no-build'],
-            'stop': ['stop', '--timeout', '20'], 'down': ['down', '--timeout', '20'],
-            'restart': ['restart', '--timeout', '20'], 'pull': ['pull'],
-            'ps': ['ps', '--all'], 'logs': ['logs', '--no-color', '--tail', '200'],
-        }
-        if action not in commands:
-            raise ValueError('Unbekannte Aktion.')
-        self.project(name)
+    def launch(self, name, action, operation):
         self.check_available()
         if not self.lock.acquire(blocking=False):
-            raise BlockingIOError('Ein Vorgang läuft. Bitte warten.')
+            raise BlockingIOError('Ein Docker-/Compose-Vorgang läuft. Bitte warten.')
         job_id = secrets.token_hex(12)
         with self.jobs_lock:
             if len(self.jobs) >= 25:
@@ -253,30 +244,7 @@ class Workspace:
         def worker():
             try:
                 self.check_available()
-                if action == 'up':
-                    result = run_command(self.command(name, 'config', '--quiet', runtime=False), timeout=30)
-                    if result['code']:
-                        with self.jobs_lock:
-                            self.jobs[job_id].update(result, state='failed')
-                        return
-                    running = [c['id'] for c in containers(self, name) if c['running']]
-                    if running:
-                        checked(self, ['docker', 'stop', '--time', '30', *running], 120)
-                    try:
-                        prepare(self, name)
-                    except Exception:
-                        if running:
-                            checked(self, ['docker', 'start', *running], 120)
-                        raise
-                result = run_command(self.command(name, *commands[action], runtime=action != 'validate'), timeout=600)
-                if action == 'up' and not result['code']:
-                    try:
-                        audit(self, name)
-                    except Exception:
-                        ids = [c['id'] for c in containers(self, name) if c['running']]
-                        if ids:
-                            checked(self, ['docker', 'stop', '--time', '30', *ids], 120)
-                        raise
+                result = operation()
                 with self.jobs_lock:
                     self.jobs[job_id].update(result, state='done' if result['code'] == 0 else 'failed')
             except Exception as error:
@@ -288,6 +256,42 @@ class Workspace:
                 self.lock.release()
         threading.Thread(target=worker, daemon=True).start()
         return {'id': job_id}
+
+    def start(self, name, action):
+        commands = {
+            'validate': ['config', '--quiet'], 'up': ['up', '-d', '--no-build'],
+            'stop': ['stop', '--timeout', '20'], 'down': ['down', '--timeout', '20'],
+            'restart': ['restart', '--timeout', '20'], 'pull': ['pull'],
+            'ps': ['ps', '--all'], 'logs': ['logs', '--no-color', '--tail', '200'],
+        }
+        if action not in commands:
+            raise ValueError('Unbekannte Aktion.')
+        self.project(name)
+        def operation():
+            if action == 'up':
+                result = run_command(self.command(name, 'config', '--quiet', runtime=False), timeout=30)
+                if result['code']:
+                    return result
+                running = [c['id'] for c in containers(self, name) if c['running']]
+                if running:
+                    checked(self, ['docker', 'stop', '--time', '30', *running], 120)
+                try:
+                    prepare(self, name)
+                except Exception:
+                    if running:
+                        checked(self, ['docker', 'start', *running], 120)
+                    raise
+            result = run_command(self.command(name, *commands[action], runtime=action != 'validate'), timeout=600)
+            if action == 'up' and not result['code']:
+                try:
+                    audit(self, name)
+                except Exception:
+                    ids = [c['id'] for c in containers(self, name) if c['running']]
+                    if ids:
+                        checked(self, ['docker', 'stop', '--time', '30', *ids], 120)
+                    raise
+            return result
+        return self.launch(name, action, operation)
 
     def job(self, job_id):
         with self.jobs_lock:
@@ -340,6 +344,32 @@ class Handler(BaseHTTPRequestHandler):
             return
         workspace = self.server.workspace
         parts = path.strip('/').split('/')
+        if parts[:2] == ['api', 'docker']:
+            from native import Native, parse_run
+            native = Native(workspace)
+            if self.command == 'POST' and path == '/api/docker/parse':
+                self.reply(200, parse_run(self.body().get('command', '')))
+            elif self.command == 'POST' and path == '/api/docker/import':
+                data = self.body()
+                self.reply(201, native.import_build(data.get('name'), base64.b64decode(data.get('archive', ''), validate=True), data.get('dockerfile', 'Dockerfile')))
+            elif self.command == 'GET' and path == '/api/docker/containers':
+                self.reply(200, {'containers': [{'name': name, 'image': native.read(name)['config']['image']} for name in native.names()]})
+            elif len(parts) == 4 and parts[2] == 'containers':
+                if self.command == 'GET':
+                    self.reply(200, native.read(parts[3]))
+                elif self.command == 'POST':
+                    self.reply(200, native.save(parts[3], self.body().get('config')))
+                else:
+                    self.reply(405, {'error': 'Methode nicht erlaubt.'})
+            elif len(parts) == 5 and parts[2] == 'containers' and parts[4] == 'actions' and self.command == 'POST':
+                data = self.body()
+                self.reply(202, native.action(parts[3], data.get('action'), data.get('command', '')))
+            elif len(parts) == 5 and parts[2] == 'containers' and parts[4] == 'files' and self.command == 'POST':
+                data = self.body()
+                self.reply(200, native.upload(parts[3], data.get('path'), base64.b64decode(data.get('content', ''), validate=True), data.get('executable')))
+            else:
+                self.reply(404, {'error': 'Nicht gefunden.'})
+            return
         if self.command == 'GET' and path == '/api/projects':
             with workspace.jobs_lock:
                 active = workspace.active

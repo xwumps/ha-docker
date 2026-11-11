@@ -52,6 +52,7 @@ def extract_archive(data, target):
                 else:
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(archive.read(item))
+            apply_permissions(entries, target)
     else:
         stream.seek(0)
         try:
@@ -74,8 +75,26 @@ def extract_archive(data, target):
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         with archive.extractfile(item) as source:
                             destination.write_bytes(source.read())
+                apply_permissions(entries, target)
         except tarfile.TarError as error:
             raise ValueError('Datei ist kein lesbares ZIP-/TAR-Archiv.') from error
+
+
+def apply_permissions(entries, target):
+    """Keep regular source permissions for COPY/RUN; never retain setuid bits."""
+    directories = {}
+    for path, directory, _, item in entries:
+        for parent in path.parents:
+            if str(parent) != '.':
+                directories.setdefault(parent, 0o755)
+        mode = ((item.external_attr >> 16) if isinstance(item, zipfile.ZipInfo) else item.mode) & 0o777
+        mode = mode or (0o755 if directory else 0o644)
+        if directory:
+            directories[path] = mode
+        else:
+            os.chmod(target / path, mode)
+    for path in sorted(directories, key=lambda p: len(p.parts), reverse=True):
+        os.chmod(target / path, directories[path])
 
 
 def validate_entries(entries):

@@ -34,12 +34,20 @@ def cleanup():
     ids = docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=cs_' + PROJECT).split()
     if ids:
         docker('rm', '-f', *ids, check=False)
+    for name in ('native-integration', 'native-built'):
+        docker('rm', '-f', 'hd_' + name, check=False)
     docker('rm', '-f', PROXY_NAME, APP_NAME, check=False)
     docker('network', 'rm', 'cs_' + PROJECT + '_default', check=False)
     volumes = docker('volume', 'ls', '-q', '--filter', 'label=com.docker.compose.project=cs_' + PROJECT).split()
     if volumes:
         docker('volume', 'rm', *volumes, check=False)
     docker('volume', 'rm', 'cs_' + PROJECT + '_kept', check=False)
+    for volume in docker('volume', 'ls', '-q', '--filter', 'label=io.ha-docker.managed=true').split():
+        metadata = json.loads(docker('volume', 'inspect', volume))[0]
+        device = metadata.get('Options', {}).get('device', '')
+        if any(device.startswith(str(path) + '/') for path in (DATA, ROOT.parent / 'integration-restored')):
+            docker('volume', 'rm', volume, check=False)
+    docker('image', 'rm', 'ha-docker/native-built:local', check=False)
     docker('network', 'rm', NETWORK, check=False)
 
 
@@ -115,6 +123,12 @@ def main():
     cleanup()
     DATA.mkdir(parents=True, exist_ok=True)
     try:
+        if DATA.is_symlink():
+            raise AssertionError('Test data directory must not be a symlink')
+        docker('run', '--rm', '--network', 'none', '--mount', f'type=bind,src={DATA},dst=/reset',
+              '--entrypoint', 'python3', 'python:3.13-alpine3.22', '-c',
+              'from pathlib import Path; import shutil; '
+              '[(p.unlink() if p.is_symlink() or p.is_file() else shutil.rmtree(p)) for p in Path("/reset").iterdir()]')
         docker('pull', 'busybox:1.37.0')
         docker('network', 'create', '--subnet', '172.30.32.0/24', NETWORK)
         run_app(DATA)
@@ -155,8 +169,12 @@ def main():
         assert 'compose-log-ok' in action('logs')
         action('stop')
         action('restart')
+        from native_integration import NativeChecks
+        native = NativeChecks(request, docker, APP_NAME)
+        native.setup()
         # Mimic Supervisor's hot backup ordering, including the durable restart marker.
         docker('exec', APP_NAME, 'python3', '/app/backups.py', 'pre')
+        native.assert_stopped()
         assert docker('inspect', 'cs_' + PROJECT + '-writer-1', '--format', '{{.State.Running}}') == 'false'
         try:
             request('api/projects/' + PROJECT, {'compose': json.dumps(config), 'env': 'NOTE=changed'})
@@ -169,6 +187,7 @@ def main():
         docker('exec', APP_NAME, 'python3', '/app/backups.py', 'post')
         assert docker('exec', 'cs_' + PROJECT + '-writer-1', 'cat', '/kept/marker') == 'durable'
         print('PASS backup hooks stop writers, block edits, and resume projects', flush=True)
+        native.after_backup()
         docker('exec', 'cs_' + PROJECT + '-writer-1', 'sh', '-c', 'echo later > /kept/marker')
         runtime = json.loads(docker('exec', APP_NAME, 'cat', '/data/stacks/' + PROJECT + '/.studio-runtime.json'))
         managed_volume = runtime['volumes']['kept']['name']
@@ -192,8 +211,12 @@ def main():
             subprocess.run(['docker', 'run', '--rm', '-i', '--network', 'none',
                 '--mount', f'type=bind,src={restored_data},dst=/restore',
                 '--entrypoint', 'tar', 'python:3.13-alpine3.22', '-xzpf', '-', '-C', '/restore'], stdin=stream, check=True)
+        # A local image must come from its archive, not a lucky rebuild/cache.
+        docker('run', '--rm', '--network', 'none', '--mount', f'type=bind,src={restored_data},dst=/restore',
+              '--entrypoint', 'python3', 'python:3.13-alpine3.22', '-c',
+              'from pathlib import Path; Path("/restore/containers/native-built/context/Dockerfile").write_text("INVALID DOCKERFILE\\n")')
         run_app(restored_data)
-        for attempt in range(40):
+        for attempt in range(240):
             try:
                 html = request(authenticated=False)
                 token = re.search(r'name="compose-token" content="([^"]+)"', html)[1]
@@ -209,6 +232,7 @@ def main():
         restored_mounts = json.loads(docker('inspect', 'cs_' + PROJECT + '-writer-1', '--format', '{{json .Mounts}}'))
         assert next(m['Source'] for m in restored_mounts if m['Destination'] == '/result').startswith(str(restored_data))
         print('PASS restore to a different data path: volume contents, bind files, .env, auto-resume', flush=True)
+        native.after_restore()
         if os.environ.get('KEEP_TEST_APP') == '1':
             print('Test app retained at ' + BASE, flush=True)
     finally:

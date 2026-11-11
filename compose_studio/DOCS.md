@@ -1,4 +1,4 @@
-# Docker Studio 0.3
+# Docker Studio 0.3.1
 
 ## Native Docker-Container
 
@@ -33,3 +33,7 @@ Für Docker-Zugriff den Schutzmodus dieser App ausschalten. Nur vertrauenswürdi
 „Images laden“ lädt Images der eingetragenen Tags, „Start / Anwenden“ übernimmt die Konfiguration. „Container entfernen“ behält persistente Daten. „Logs“ zeigt die letzten 200 Zeilen pro Dienst nach dem Abruf. Bei Problemen zuerst das App-Protokoll prüfen.
 
 Version 0.3 ist experimentell. Installation, Datensicherung, Wiederherstellung und Grenzen: [README](https://github.com/xwumps/ha-docker#readme).
+
+## Startfehler: Docker-Zugriff
+
+Bei fehlendem Docker-Socket: App stoppen, Schutzmodus auf der App-Infoseite ausschalten und erneut starten. Docker ist in HA OS bereits vorhanden. Version 0.3.1 erkennt `/run/docker.sock` sowie `/var/run/docker.sock` und unterscheidet einen fehlenden Socket von einem nicht erreichbaren Daemon. Ein Update allein ersetzt das Ausschalten des Schutzmodus nicht. Bleibt der Fehler bei ausgeschaltetem Schutzmodus bestehen, App- und Supervisor-Protokoll prüfen.

@@ -1,3 +1,10 @@
+# 0.3.1
+
+- Bevorzugt den vom HA-Supervisor eingebundenen Socket `/run/docker.sock`; unterstützt weiterhin `/var/run/docker.sock`.
+- Prüft auf tatsächliche Unix-Sockets und unterscheidet einen fehlenden Mount von einer fehlgeschlagenen Daemon-Verbindung.
+- Kurze, konkrete Startanleitung bei fehlendem Docker-Zugriff statt wiederholter Python-Tracebacks.
+- Zusätzliche Socket-Tests mit echten Unix-Sockets und Docker-Proben für HA-Mount, Legacy-Fallback und fehlenden Mount.
+
 # 0.3.0
 
 - Neuer nativer Docker-Bereich ohne Compose-Datei: Formulare, docker run-Import, Container starten/stoppen/neustarten/entfernen, Status, Logs und nicht interaktives docker exec.

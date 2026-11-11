@@ -1,5 +1,5 @@
 name: Docker Studio
-version: "0.3.0"
+version: "0.3.1"
 slug: compose_studio
 description: Docker-Container, docker run, Dockerfile-Builds und Compose V2 mit HA-Backups
 url: https://github.com/xwumps/ha-docker/tree/main/compose_studio

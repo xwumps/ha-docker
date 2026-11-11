@@ -9,6 +9,7 @@ import secrets
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,13 +27,43 @@ MAX_OUTPUT = 128 * 1024
 SHUTTING_DOWN = threading.Event()
 PROCESSES = set()
 PROCESSES_LOCK = threading.Lock()
+DOCKER_SOCKET_PATHS = (Path('/run/docker.sock'), Path('/var/run/docker.sock'))
+
+
+class DockerConnectionError(RuntimeError):
+    """Expected local Docker access/configuration failure at startup."""
+
+
+def find_docker_socket():
+    for path in DOCKER_SOCKET_PATHS:
+        try:
+            if path.is_socket():
+                return path
+        except OSError:
+            continue
+    return None
+
+
 # Do not expose the Supervisor token or inherited variables to Compose interpolation.
 DOCKER_ENV = {
     'PATH': os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'),
     'HOME': '/data', 'LANG': 'C.UTF-8', 'COMPOSE_ANSI': 'never',
-    'DOCKER_HOST': 'unix:///var/run/docker.sock',
+    'DOCKER_HOST': 'unix://' + str(find_docker_socket() or DOCKER_SOCKET_PATHS[0]),
     'DOCKER_CONFIG': '/data/docker-config',
 }
+
+
+def require_docker_socket():
+    path = find_docker_socket()
+    if path is None:
+        raise DockerConnectionError(
+            'Docker-Zugriff fehlt: Im App-Container ist kein Docker-Socket eingebunden.\n'
+            'In Home Assistant Docker Studio stoppen, den Schutzmodus dieser App ausschalten '
+            'und die App anschließend neu starten.\n'
+            'Geprüfte Pfade: ' + ', '.join(str(p) for p in DOCKER_SOCKET_PATHS) + '\n'
+            'Docker muss auf Home Assistant OS nicht zusätzlich installiert oder gestartet werden.')
+    DOCKER_ENV['DOCKER_HOST'] = 'unix://' + str(path)
+    return path
 
 
 def run_command(args, cwd=None, timeout=600):
@@ -68,9 +99,13 @@ def run_command(args, cwd=None, timeout=600):
 
 def discover_data_source():
     """Find our /data bind by Config.Hostname, even with a custom HA hostname."""
+    path = require_docker_socket()
     listing = run_command(['docker', 'ps', '-q'], timeout=20)
     if listing['code']:
-        raise RuntimeError('Docker nicht erreichbar. Schutzmodus dieser App ausschalten.\n' + listing['output'])
+        raise DockerConnectionError(
+            f'Docker-Socket {path} ist eingebunden, aber die Docker-Engine ist nicht erreichbar.\n'
+            'App stoppen und neu starten; bei weiterem Fehler Supervisor- und App-Protokoll prüfen.\n'
+            'Docker meldet:\n' + listing['output'])
     ids = listing['output'].split()
     if not ids:
         raise RuntimeError('Eigener App-Container wurde nicht gefunden.')
@@ -443,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.umask(0o077)
+    require_docker_socket()
     version = run_command(['docker', 'compose', 'version', '--short'], timeout=20)
     if version['code'] or not version['output'].strip().lstrip('v').startswith('2.'):
         raise RuntimeError('Docker Compose V2 wird benötigt: ' + version['output'])
@@ -483,4 +519,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except DockerConnectionError as error:
+        print('Docker Studio startet nicht:\n' + str(error), file=sys.stderr, flush=True)
+        raise SystemExit(1)

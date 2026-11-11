@@ -1,8 +1,24 @@
-# Prüfstand für Version 0.3.0
+# Prüfstand für Version 0.3.1
 
 Geprüft am 11. November 2026 in einer Linux-amd64-Cloud-Entwicklungsumgebung mit echter lokaler Docker-Engine. **Nicht direkt auf Home Assistant OS oder aarch64 installiert/getestet.** Die App bleibt experimentell.
 
-## Automatisierte Tests
+## Hotfix 0.3.1: Docker-Socket
+
+Der Nutzerbericht zeigte beim Start `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`. Aus diesem Log allein lässt sich nicht erkennen, ob der Schutzmodus noch aktiv war, der Socket fehlte oder eine vorhandene Verbindung nicht erreichbar war. Der HA-Supervisor bindet laut aktuellem Quellcode `/run/docker.sock` nur bei `docker_api` und ausgeschaltetem Schutzmodus ein.
+
+Für 0.3.1 wurden **37 Unit-Tests** ausgeführt: die 32 bestehenden Tests plus fünf Socket-Tests für HA-Pfad ohne Alias, Legacy-Fallback, reguläre Datei statt Socket, fehlenden Mount und eingebundenen, aber nicht erreichbaren Socket.
+
+Zusätzlich mit echter lokaler Docker-Engine geprüft:
+
+- Start ohne Socket: Exit 1 mit konkreter Schutzmodus-Anleitung und ohne Python-Traceback.
+- Vollständiger App-Start mit HA-Mount `/run/docker.sock`, wobei `/var/run` absichtlich ein eigenständiges leeres Verzeichnis ist. Die Weboberfläche startet und weist direkte Verbindungen weiterhin mit 403 ab.
+- Legacy-Fallback über `/var/run/docker.sock`: echte Docker-Verbindung und Erkennung des eigenen persistenten Datenpfads.
+
+Ein Image wurde erfolgreich neu gebaut. Die folgenden umfangreichen Container-/Build-/Restore- und Browsernachweise stammen aus Version 0.3.0; diese Funktionen wurden durch den Hotfix nicht verändert. Ein direkter Installationstest von 0.3.1 auf dem Nutzergerät steht noch aus. Ein vom Supervisor nicht eingebundener Socket kann durch die App nicht selbst freigegeben werden.
+
+Reproduktion: `python3 tests/socket_integration.py` nach dem Image-Build.
+
+## Bestehende automatisierte Tests aus 0.3.0
 
 **32 Python-Tests bestanden.** Bestehende Zugriffs-/Projektgrenzen, sicherer ZIP/TAR-Import, Pfad-/Symlink-/Hardlink-Grenzen, Größenbegrenzung, Jotion-Schlüssel, Volume-Migration und Restore-Pfade sowie zusätzliche native Docker-Prüfungen:
 

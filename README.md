@@ -2,7 +2,7 @@
 
 Eine Home-Assistant-App (früher Add-on) für **Docker und Docker Compose V2** auf deinem HA-OS-Gerät. Native Container, `docker run`-Import, Dockerfile-Builds, Compose-Projekte, Jotion-Einrichtung, Status und Logs. Normale lokale Docker-Volumes werden im persistenten App-Datenordner gespeichert und beim Home-Assistant-Backup dieser App mitgesichert.
 
-**Version 0.3.0 ist experimentell.** Unterstützt werden `amd64` und `aarch64`. Der Container wird auf dem Gerät gebaut. Ein direkter Installationstest mit dem Home-Assistant-Supervisor steht noch aus; Details im [Prüfbericht](TESTREPORT.md).
+**Version 0.3.1 ist experimentell.** Unterstützt werden `amd64` und `aarch64`. Der Container wird auf dem Gerät gebaut. Ein direkter Installationstest mit dem Home-Assistant-Supervisor steht noch aus; Details im [Prüfbericht](TESTREPORT.md).
 
 ## Installation und Update
 
@@ -15,6 +15,18 @@ Eine Home-Assistant-App (früher Add-on) für **Docker und Docker Compose V2** a
 Für ein Update im Store „Nach Updates suchen“ und bei der App „Aktualisieren“ wählen. Version 0.2.0 ist als Änderung mit manueller Bestätigung markiert: **Ein App-Stopp stoppt jetzt auch die laufenden Projekte. Beim nächsten App-Start werden sie fortgesetzt.** Während HA-Backups werden die Projekte ebenfalls angehalten.
 
 Eine lokale ZIP-Installation ist weiterhin möglich: Den Ordner `compose_studio` nach `/addons/compose_studio` auf HA OS kopieren und im Store die lokalen Apps neu einlesen. Eine ZIP-Download-URL gehört nicht in den Repository-Dialog.
+
+## Startfehler: Docker nicht erreichbar
+
+Der Home-Assistant-Supervisor bindet den Docker-Socket nur bei `docker_api: true` **und ausgeschaltetem Schutzmodus** in die App ein. Home Assistant OS selbst verwendet bereits Docker; es muss kein weiterer Docker-Dienst installiert oder gestartet werden.
+
+1. **Einstellungen → Apps → Docker Studio → Stoppen**.
+2. Auf der App-Infoseite den **Schutzmodus dieser App ausschalten**.
+3. **Starten**. Ein vollständiger Stopp/Start sorgt dafür, dass der Supervisor die Mount-Konfiguration anwendet.
+
+Version 0.3.1 verwendet bevorzugt den HA-Socket `/run/docker.sock` und unterstützt zusätzlich `/var/run/docker.sock`. Beide Pfade werden auf einen tatsächlichen Unix-Socket geprüft. Fehlt ein zugänglicher Socket, erscheint eine kurze Anleitung statt eines Python-Tracebacks. Ist der Socket eingebunden, aber der Daemon nicht erreichbar, meldet die App diesen Fall separat mit dem ursprünglichen Docker-Fehler.
+
+Falls der Schutzmodus schon aus ist und der Fehler nach Stopp/Start bleibt: App-Protokoll und Supervisor-Protokoll prüfen. Ein Versionsupdate kann einen vom Supervisor nicht eingebundenen Socket nicht selbst freigeben. Die Erkennung erzwingt weiterhin eine lokale Unix-Verbindung und übernimmt keinen extern gesetzten Remote-Docker-Endpunkt.
 
 ## Normale Docker-Container verwenden
 

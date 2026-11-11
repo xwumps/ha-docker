@@ -1,19 +1,25 @@
-# Compose Studio
+# Compose Studio 0.2
 
-Repository: [xwumps/ha-docker](https://github.com/xwumps/ha-docker). Zum Hinzufügen im App-Store die URL `https://github.com/xwumps/ha-docker` verwenden.
+## Installieren
 
-1. Schutzmodus dieser App deaktivieren, anschließend starten.
-2. „Weboberfläche öffnen“ wählen.
-3. Projekt benennen, Compose-YAML und `.env` speichern, „Prüfen“, dann „Start / Anwenden“.
+„Installieren / Importieren“ öffnen. Für Jotion Projektname, freien Port und Browser-Adresse des HA-Geräts eingeben, dann „Jotion vorbereiten“ und „Start / Anwenden“. Das Paket und sichere Schlüssel werden automatisch vorbereitet. Den Master Key aus `.env` zusätzlich separat aufbewahren.
 
-Die App steuert die vorhandene Docker-Engine deines Home-Assistant-OS-Geräts mit Docker Compose V2. Sie braucht dadurch weitreichende Rechte auf dem Host. Nur vertrauenswürdige Compose-Dateien verwenden.
+Andere Apps als ZIP/TAR mit Compose-Datei und Zusatzdateien importieren. `.env` im Editor prüfen; weitere Dateien unter „Zusatzdateien im Projekt“ hochladen. Ein importiertes `.env.example` kann noch Platzhalter enthalten. Es werden fertige Container-Images benötigt. Installationsskripte und lokale Builds werden nicht ausgeführt.
 
-Die Vorlage startet nginx auf dem in `.env` eingestellten Host-Port 8090. Bei einem Port-Konflikt `WEB_PORT` ändern. Containerdienste sind über ihre eigenen Ports erreichbar; die App-Oberfläche läuft über Home Assistant Ingress.
+## Backup und Daten
 
-„Images laden“ lädt die Images; danach „Start / Anwenden“ zum Aktualisieren der Container. „Stoppen“ behält Container. „Container entfernen“ entfernt Container und Projektnetzwerke, behält benannte Volumes. Die beschreibbare Container-Schicht geht beim Entfernen verloren.
+Normale lokale benannte Volumes werden unter dem persistenten App-Datenordner gespeichert. Relative Bind-Mounts innerhalb dieses Ordners sind ebenfalls enthalten. In Home Assistant ein Backup erstellen und **diese App auswählen**. Beim Backup werden die aktiven Projekte angehalten und danach wieder gestartet. Bei laufendem Compose-Vorgang schlägt der Backup-Vorlauf fehl; später erneut sichern.
 
-**Ein Stopp oder Deinstallieren dieser App stoppt deine Projekte nicht.** Neustarts nach einem Host-Reboot bestimmt `restart:` im Compose-YAML. Benannte Docker-Volumes und externe Bind-Mounts sind nicht automatisch im HA-App-Backup enthalten. `.env` und YAML liegen im persistenten privaten App-Verzeichnis; dessen Host-Pfad zeigt die Oberfläche an.
+Nach einer HA-Wiederherstellung setzt die App zuvor aktive Projekte mit den wiederhergestellten Daten fort. Docker-Images müssen vorhanden oder abrufbar sein. Externe Volumes, eigene Treiber und Host-Pfade außerhalb der App sind nicht automatisch sicherbar und werden abgewiesen.
 
-Die Oberfläche bearbeitet YAML und `.env`; zusätzliche Dateien/Build-Kontexte können hier noch nicht hochgeladen werden. Logs sind auf die letzten 200 Zeilen pro Dienst begrenzt und erscheinen nach Abschluss des Abrufs. Ein Vorgang zur Zeit; laufende Vorgänge lassen sich nach einem Neuladen der Oberfläche wieder verbinden, aber nicht über einen Neustart der App hinweg.
+**Neu ab 0.2: Ein App-Stopp stoppt auch die Projekte.** Beim nächsten App-Start werden zuvor aktive Projekte fortgesetzt. Vor einer Deinstallation YAML, Schlüssel und Daten sichern; das Löschen der App-Daten kann auch die verwalteten Volume-Nutzdaten entfernen.
 
-Wenn die App nicht startet: App-Protokoll lesen und Schutzmodus prüfen. Vollständige Installation, Repository-Veröffentlichung, Datenpfade, Backups und Grenzen stehen in der README des Repositorys.
+Beim Upgrade von 0.1 werden normale lokale Volumes im gestoppten Zustand kopiert. Die Originalvolumes bleiben erhalten. Das braucht vorübergehend zusätzlichen Speicherplatz.
+
+## Betrieb
+
+Für Docker-Zugriff den Schutzmodus dieser App ausschalten. Nur vertrauenswürdige Compose-Projekte verwenden; die App besitzt weitreichende Host-Rechte. Die Oberfläche läuft über Home Assistant Ingress. Die eigentlichen Dienste erreichst du über ihre Compose-Ports.
+
+„Images laden“ lädt Images der eingetragenen Tags, „Start / Anwenden“ übernimmt die Konfiguration. „Container entfernen“ behält persistente Daten. „Logs“ zeigt die letzten 200 Zeilen pro Dienst nach dem Abruf. Bei Problemen zuerst das App-Protokoll prüfen.
+
+Version 0.2 ist experimentell. Installation, Datensicherung, Wiederherstellung und Grenzen: [README](https://github.com/xwumps/ha-docker#readme).

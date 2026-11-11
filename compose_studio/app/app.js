@@ -10,10 +10,12 @@ function renderControls() {
     button.disabled = busy || (!!button.dataset.action && (!saved || dirty));
   });
   fields.forEach(id => { $(id).disabled = busy || (id === 'name' && saved); });
+  document.querySelectorAll('form input').forEach(field => { field.disabled = busy; });
   $('dirty').textContent = dirty ? 'Ungespeichert' : saved ? 'Gespeichert' : 'Entwurf';
 }
 async function api(path, body) {
   const response = await fetch('api/' + path, {
+    signal: AbortSignal.timeout(180000),
     method: body === undefined ? 'GET' : 'POST',
     headers: {'X-Compose-Token': token, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
     ...(body === undefined ? {} : {body: JSON.stringify(body)}),
@@ -50,12 +52,13 @@ function fill(data) {
   selected = data.name; saved = true; dirty = false;
   $('name').value = data.name; $('compose').value = data.compose; $('env').value = data.env;
   $('title').textContent = data.name;
-  $('location').textContent = 'Host: ' + data.host_path + ' · Compose-Projekt: ' + data.project_name;
+  $('location').textContent = 'Projektdateien: ' + data.host_path + ' · Volume-Daten: ' + data.storage_path + ' · Compose-Projekt: ' + data.project_name;
+  $('files-panel').hidden = false;
   renderControls();
 }
 async function load(name) {
   busy = true; renderControls(); message('');
-  try { fill(await api('projects/' + encodeURIComponent(name))); await refreshList(); }
+  try { fill(await api('projects/' + encodeURIComponent(name))); await refreshList(); await refreshFiles(); }
   catch (error) { message(error.message, true); }
   finally { busy = false; renderControls(); }
 }
@@ -64,6 +67,7 @@ function newProject() {
   selected = null; saved = false; dirty = false;
   $('name').value = ''; $('compose').value = example; $('env').value = 'WEB_PORT=8090\n';
   $('title').textContent = 'Neues Projekt'; $('location').textContent = 'Speichere zuerst dein Projekt.';
+  $('files-panel').hidden = true;
   message(''); renderControls(); $('name').focus();
   document.querySelectorAll('nav button').forEach(button => button.classList.remove('selected'));
 }
@@ -77,7 +81,54 @@ $('save').addEventListener('click', async () => {
     if (!saved && (await api('projects')).projects.includes(name)) throw new Error('Name bereits vorhanden. Projekt links öffnen.');
     fill(await api('projects/' + encodeURIComponent(name), {compose: $('compose').value, env: $('env').value}));
     await refreshList(); message('Gespeichert. Mit „Prüfen“ kannst du die Konfiguration validieren.');
+    await refreshFiles();
   } catch (error) { message(error.message, true); }
+  finally { busy = false; renderControls(); }
+});
+async function refreshFiles() {
+  if (!selected) return;
+  const data = await api('projects/' + encodeURIComponent(selected) + '/files');
+  $('file-list').replaceChildren();
+  data.files.forEach(path => { const item = document.createElement('li'); item.textContent = path; $('file-list').append(item); });
+}
+function encodedFile(file, limit) {
+  if (!file || file.size > limit) return Promise.reject(new Error('Keine Datei gewählt oder Datei zu groß.'));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'));
+    reader.readAsDataURL(file);
+  });
+}
+$('open-install').addEventListener('click', () => { $('install-panel').open = true; $('install-panel').scrollIntoView({behavior:'smooth', block:'start'}); });
+async function importProject(data) {
+  if (!canLeave()) return;
+  busy = true; renderControls(); message('Projekt wird vorbereitet …');
+  try {
+    fill(await api('import', data)); await refreshList(); await refreshFiles();
+    $('install-panel').open = false;
+    message(data.kind === 'jotion' ? 'Jotion ist vorbereitet. „Start / Anwenden“ lädt die Images und startet alle Dienste. Den Master Key aus .env zusätzlich sicher aufbewahren.' : 'Importiert. .env prüfen, dann „Prüfen“ und „Start / Anwenden“.');
+  } catch (error) { message(error.message, true); }
+  finally { busy = false; renderControls(); }
+}
+$('jotion-form').addEventListener('submit', event => {
+  event.preventDefault();
+  importProject({kind:'jotion', name:$('jotion-name').value.trim(), version:$('jotion-version').value.trim().replace(/^v/,''), public_url:$('jotion-url').value.trim(), port:Number($('jotion-port').value)});
+});
+$('archive-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try { await importProject({kind:'archive',name:$('import-name').value.trim(),archive:await encodedFile($('archive').files[0],12*1024*1024)}); }
+  catch (error) { message(error.message,true); }
+});
+$('extra-file').addEventListener('change', () => { if (!$('extra-path').value && $('extra-file').files[0]) $('extra-path').value = $('extra-file').files[0].name; });
+$('file-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!saved || busy) return;
+  busy = true; renderControls();
+  try {
+    await api('projects/'+encodeURIComponent(selected)+'/files',{path:$('extra-path').value.trim(),content:await encodedFile($('extra-file').files[0],2*1024*1024)});
+    await refreshFiles(); message('Zusatzdatei gespeichert. Mit „Start / Anwenden“ Änderungen übernehmen.');
+  } catch (error) { message(error.message,true); }
   finally { busy = false; renderControls(); }
 });
 async function followJob(id) {

@@ -1,5 +1,6 @@
 """Home Assistant Ingress app for a private, scoped Compose V2 workspace."""
 import hmac
+import base64
 import json
 import os
 from pathlib import Path
@@ -13,14 +14,18 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from storage import OperationLock, audit, checked, containers, legacy_volumes, prepare, rebase
 
 DATA = Path('/data')
 APP = Path(__file__).parent
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,39}\Z')
 TOKEN = secrets.token_urlsafe(32)
 INGRESS_IP = '172.30.32.2'
-MAX_BODY = 512 * 1024
+MAX_BODY = 18 * 1024 * 1024
 MAX_OUTPUT = 128 * 1024
+SHUTTING_DOWN = threading.Event()
+PROCESSES = set()
+PROCESSES_LOCK = threading.Lock()
 # Do not expose the Supervisor token or inherited variables to Compose interpolation.
 DOCKER_ENV = {
     'PATH': os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'),
@@ -35,6 +40,8 @@ def run_command(args, cwd=None, timeout=600):
     with tempfile.TemporaryFile() as output:
         proc = subprocess.Popen(args, cwd=cwd, env=DOCKER_ENV, stdin=subprocess.DEVNULL,
                                 stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        with PROCESSES_LOCK:
+            PROCESSES.add(proc)
         timed_out = False
         try:
             proc.wait(timeout=timeout)
@@ -46,6 +53,9 @@ def run_command(args, cwd=None, timeout=600):
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
+        finally:
+            with PROCESSES_LOCK:
+                PROCESSES.discard(proc)
         size = output.tell()
         output.seek(max(0, size - MAX_OUTPUT))
         text = output.read().decode('utf-8', errors='replace')
@@ -112,10 +122,19 @@ class Workspace:
         # Do not resolve this path: Compose must see the Docker HOST path.
         self.root = root / 'stacks'
         self.root.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.Lock()
+        self.lock = OperationLock(root / '.studio-operation.lock')
         self.jobs_lock = threading.Lock()
         self.jobs = {}
         self.active = None
+
+    def run(self, *args, **kwargs):
+        return run_command(*args, **kwargs)
+
+    write = staticmethod(atomic_write)
+
+    def check_available(self):
+        if SHUTTING_DOWN.is_set() or (self.root.parent / '.studio-backup-state.json').exists():
+            raise BlockingIOError('Backup oder App-Stopp läuft. Bitte warten.')
 
     def project(self, name, exists=True):
         if not isinstance(name, str) or not NAME.fullmatch(name):
@@ -138,14 +157,19 @@ class Workspace:
         path = self.project(name)
         return {'name': name, 'compose': (path / 'compose.yaml').read_text(),
                 'env': (path / '.env').read_text() if (path / '.env').exists() else '',
-                'host_path': str(path), 'project_name': 'cs_' + name}
+                'host_path': str(path), 'storage_path': str(self.root.parent / 'storage' / name),
+                'project_name': 'cs_' + name}
 
     def save(self, name, compose, env):
         if not isinstance(compose, str) or not compose.strip() or not isinstance(env, str):
             raise ValueError('Compose-YAML darf nicht leer sein; .env muss Text sein.')
+        if len(compose.encode()) + len(env.encode()) > 512 * 1024:
+            raise ValueError('YAML und .env dürfen zusammen maximal 512 KiB groß sein.')
+        self.check_available()
         if not self.lock.acquire(blocking=False):
             raise BlockingIOError('Ein Vorgang läuft. Bitte warten.')
         try:
+            self.check_available()
             path = self.project(name, exists=False)
             path.mkdir(mode=0o700, exist_ok=True)
             atomic_write(path / '.env', env)
@@ -154,15 +178,62 @@ class Workspace:
             self.lock.release()
         return self.read(name)
 
-    def command(self, name, *arguments):
+    def command(self, name, *arguments, runtime=True):
         path = self.project(name)
+        config = '.studio-runtime.json' if runtime and (path / '.studio-runtime.json').exists() else 'compose.yaml'
         return ['docker', 'compose', '--ansi', 'never', '--project-name', 'cs_' + name,
                 '--project-directory', str(path), '--env-file', str(path / '.env'),
-                '-f', str(path / 'compose.yaml'), *arguments]
+                '-f', str(path / config), *arguments]
+
+    def files(self, name):
+        project = self.project(name)
+        found = []
+        for directory, folders, files in os.walk(project, followlinks=False):
+            folders[:] = [f for f in folders if not f.startswith('.studio') and not (Path(directory) / f).is_symlink()]
+            for filename in files:
+                path = Path(directory) / filename
+                if not filename.startswith('.studio') and not path.is_symlink():
+                    found.append(str(path.relative_to(project)))
+                    if len(found) >= 300:
+                        return sorted(found)
+        return sorted(found)
+
+    def save_file(self, name, filename, encoded):
+        from importers import safe_path
+        self.check_available()
+        project = self.project(name)
+        relative = safe_path(filename)
+        if str(relative) in ('compose.yaml', '.env'):
+            raise ValueError('Compose-YAML und .env bitte im Editor bearbeiten.')
+        data = base64.b64decode(encoded, validate=True)
+        if len(data) > 2 * 1024 * 1024:
+            raise ValueError('Zusatzdateien dürfen maximal 2 MiB groß sein.')
+        if not self.lock.acquire(blocking=False):
+            raise BlockingIOError('Ein Vorgang läuft.')
+        try:
+            self.check_available()
+            path = project / relative
+            for parent in (path, *path.parents):
+                if parent == project:
+                    break
+                if parent.is_symlink():
+                    raise ValueError('Symlinks dürfen nicht überschrieben werden.')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix='.save-', dir=path.parent)
+            try:
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(data)
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            return {'files': self.files(name)}
+        finally:
+            self.lock.release()
 
     def start(self, name, action):
         commands = {
-            'validate': ['config', '--quiet'], 'up': ['up', '-d'],
+            'validate': ['config', '--quiet'], 'up': ['up', '-d', '--no-build'],
             'stop': ['stop', '--timeout', '20'], 'down': ['down', '--timeout', '20'],
             'restart': ['restart', '--timeout', '20'], 'pull': ['pull'],
             'ps': ['ps', '--all'], 'logs': ['logs', '--no-color', '--tail', '200'],
@@ -170,6 +241,7 @@ class Workspace:
         if action not in commands:
             raise ValueError('Unbekannte Aktion.')
         self.project(name)
+        self.check_available()
         if not self.lock.acquire(blocking=False):
             raise BlockingIOError('Ein Vorgang läuft. Bitte warten.')
         job_id = secrets.token_hex(12)
@@ -180,13 +252,31 @@ class Workspace:
             self.active = job_id
         def worker():
             try:
+                self.check_available()
                 if action == 'up':
-                    result = run_command(self.command(name, 'config', '--quiet'), timeout=30)
+                    result = run_command(self.command(name, 'config', '--quiet', runtime=False), timeout=30)
                     if result['code']:
                         with self.jobs_lock:
                             self.jobs[job_id].update(result, state='failed')
                         return
-                result = run_command(self.command(name, *commands[action]), timeout=600)
+                    running = [c['id'] for c in containers(self, name) if c['running']]
+                    if running:
+                        checked(self, ['docker', 'stop', '--time', '30', *running], 120)
+                    try:
+                        prepare(self, name)
+                    except Exception:
+                        if running:
+                            checked(self, ['docker', 'start', *running], 120)
+                        raise
+                result = run_command(self.command(name, *commands[action], runtime=action != 'validate'), timeout=600)
+                if action == 'up' and not result['code']:
+                    try:
+                        audit(self, name)
+                    except Exception:
+                        ids = [c['id'] for c in containers(self, name) if c['running']]
+                        if ids:
+                            checked(self, ['docker', 'stop', '--time', '30', *ids], 120)
+                        raise
                 with self.jobs_lock:
                     self.jobs[job_id].update(result, state='done' if result['code'] == 0 else 'failed')
             except Exception as error:
@@ -254,7 +344,27 @@ class Handler(BaseHTTPRequestHandler):
             with workspace.jobs_lock:
                 active = workspace.active
             self.reply(200, {'projects': workspace.list_projects(), 'active_job': active,
-                             'host_root': str(workspace.root), 'compose_version': self.server.compose_version})
+                             'host_root': str(workspace.root), 'compose_version': self.server.compose_version,
+                             'backup_paused': (workspace.root.parent / '.studio-backup-state.json').exists()})
+        elif self.command == 'POST' and path == '/api/import':
+            from importers import install_archive, install_jotion
+            data = self.body()
+            if data.get('kind') == 'jotion':
+                result = install_jotion(workspace, data.get('name'), data.get('version', ''),
+                                        data.get('public_url', ''), data.get('port'))
+            elif data.get('kind') == 'archive':
+                result = install_archive(workspace, data.get('name'), base64.b64decode(data.get('archive', ''), validate=True))
+            else:
+                raise ValueError('Unbekannter Importtyp.')
+            self.reply(201, result)
+        elif len(parts) == 4 and parts[:2] == ['api', 'projects'] and parts[3] == 'files':
+            if self.command == 'GET':
+                self.reply(200, {'files': workspace.files(parts[2])})
+            elif self.command == 'POST':
+                data = self.body()
+                self.reply(200, workspace.save_file(parts[2], data.get('path'), data.get('content')))
+            else:
+                self.reply(405, {'error': 'Methode nicht erlaubt.'})
         elif self.command == 'GET' and len(parts) == 3 and parts[:2] == ['api', 'jobs']:
             self.reply(200, workspace.job(parts[2]))
         elif len(parts) == 3 and parts[:2] == ['api', 'projects']:
@@ -275,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError('JSON wird erwartet.')
         length = int(self.headers.get('Content-Length', '0'))
         if not 0 < length <= MAX_BODY:
-            raise ValueError('Anfrage leer oder größer als 512 KiB.')
+            raise ValueError('Anfrage leer oder größer als 18 MiB.')
         data = json.loads(self.rfile.read(length))
         if not isinstance(data, dict):
             raise ValueError('JSON-Objekt wird erwartet.')
@@ -307,8 +417,36 @@ def main():
     if version['code'] or not version['output'].strip().lstrip('v').startswith('2.'):
         raise RuntimeError('Docker Compose V2 wird benötigt: ' + version['output'])
     root = mirror_data_source(discover_data_source())
+    workspace = Workspace(root)
+    from backups import Backup
+    backup = Backup(workspace)
+    backup.post()  # Resume after a stopped app or a restored Home Assistant backup.
+    legacy = [name for name in workspace.list_projects()
+              if not (workspace.project(name) / '.studio-runtime.json').exists()
+              and (containers(workspace, name) or legacy_volumes(workspace, name))]
+    if legacy:
+        print('Bestehende Projekte werden in den gesicherten App-Speicher übernommen …', flush=True)
+        backup.pre(reason='upgrade')
+        backup.post()
+    def shutdown(signum, frame):
+        SHUTTING_DOWN.set()
+        with PROCESSES_LOCK:
+            pending = list(PROCESSES)
+        for proc in pending:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        if not workspace.lock.acquire(timeout=35):
+            raise RuntimeError('Laufender Vorgang konnte für den App-Stopp nicht beendet werden.')
+        workspace.lock.release()
+        if not backup.state.exists():
+            backup.pre(reason='shutdown')
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     server = ThreadingHTTPServer(('0.0.0.0', 8099), Handler)
-    server.workspace = Workspace(root)
+    server.workspace = workspace
     server.compose_version = version['output'].strip()
     print(f'Compose Studio: Compose {server.compose_version}; Projekte: {server.workspace.root}', flush=True)
     server.serve_forever()

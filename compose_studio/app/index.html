@@ -13,18 +13,47 @@
   <main>
     <aside>
       <div class="aside-head"><h2>Projekte</h2><button id="new" title="Neues Projekt">＋ Neu</button></div>
+      <button id="open-install" class="install-button">↓ Installieren / Importieren</button>
       <nav id="projects" aria-label="Compose-Projekte"></nav>
       <p class="muted">Jedes Projekt hat eine eigene Compose-Datei und eigene Umgebungsvariablen.</p>
       <p class="muted">Host-Verzeichnis<br><code id="root">Wird geladen …</code></p>
     </aside>
     <section class="workspace">
       <div class="heading"><div><p class="eyebrow">DEINE DOCKER-UMGEBUNG</p><h1 id="title">Neues Projekt</h1></div><span id="dirty" class="badge">Entwurf</span></div>
-      <div class="notice">Diese App steuert die Docker-Engine deines HA-Hosts. Verwende vertrauenswürdige Compose-Dateien. Eigene Container und deren Volumes werden nicht automatisch vom Supervisor verwaltet oder gesichert.</div>
+      <div class="notice">Verwaltete lokale Volume-Daten liegen im App-Datenordner und werden beim HA-Backup dieser App mitgesichert. Während der Sicherung und bei einem App-Stopp pausieren die Projekte. Die App hat weitreichende Docker-Rechte.</div>
+      <details id="install-panel" class="import-panel">
+        <summary>App installieren oder Projekt importieren</summary>
+        <div class="import-grid">
+          <form id="jotion-form">
+            <h2>Jotion einrichten</h2>
+            <p class="muted">Lädt das offizielle Release-Paket und erzeugt sichere Schlüssel. Danach „Start / Anwenden“ wählen.</p>
+            <label class="field">Projektname<input id="jotion-name" value="jotion" required maxlength="40" pattern="[a-z][a-z0-9_-]{0,39}"></label>
+            <label class="field">Adresse im Browser<input id="jotion-url" type="url" placeholder="http://192.168.1.20:8090" required></label>
+            <div class="import-grid"><label class="field">HTTP-Port<input id="jotion-port" type="number" value="8090" min="1024" max="65535" required></label><label class="field">Version<input id="jotion-version" placeholder="Neueste stabile Version"></label></div>
+            <button type="submit" class="primary">Jotion vorbereiten</button>
+          </form>
+          <form id="archive-form">
+            <h2>Compose-Projekt importieren</h2>
+            <p class="muted">ZIP oder TAR.GZ mit Compose-Datei, .env und Zusatzdateien. Installationsskripte werden nicht ausgeführt. Fertige Container-Images werden benötigt.</p>
+            <label class="field">Projektname<input id="import-name" placeholder="meine-app" required maxlength="40" pattern="[a-z][a-z0-9_-]{0,39}"></label>
+            <label class="field">Projektarchiv (bis 12 MiB)<input id="archive" type="file" accept=".zip,.tar,.tar.gz,.tgz" required></label>
+            <button type="submit">Archiv importieren</button>
+          </form>
+        </div>
+      </details>
       <label class="field">Projektname <input id="name" placeholder="z. B. mein-webserver" maxlength="40" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9_-]{0,39}"></label>
       <div class="editor-grid">
         <label class="field">compose.yaml <textarea id="compose" spellcheck="false" aria-label="Docker Compose YAML"></textarea></label>
         <label class="field">.env <textarea id="env" spellcheck="false" aria-label="Umgebungsvariablen"></textarea><span class="muted">Werte werden im Projekt gespeichert. Keine Geheimnisse in Screenshots oder geteilte Logs übernehmen.</span></label>
       </div>
+      <details id="files-panel" class="import-panel" hidden>
+        <summary>Zusatzdateien im Projekt</summary>
+        <ul id="file-list" class="file-list"></ul>
+        <form id="file-form">
+          <div class="import-grid"><label class="field">Datei (bis 2 MiB)<input id="extra-file" type="file" required></label><label class="field">Pfad im Projekt<input id="extra-path" placeholder="docker/Caddyfile" required></label></div>
+          <button type="submit">Datei speichern / ersetzen</button>
+        </form>
+      </details>
       <p class="muted" id="location">Speichere zuerst dein Projekt.</p>
       <div class="toolbar">
         <button id="save" class="primary">Speichern</button>
@@ -37,7 +66,7 @@
         <button data-action="logs">Logs</button>
         <button data-action="down" class="danger">Container entfernen</button>
       </div>
-      <p class="muted">Updates: „Images laden“, anschließend „Start / Anwenden“. „Container entfernen“ führt <code>compose down</code> aus und behält benannte Volumes. Ein App-Stopp stoppt deine Projekte nicht.</p>
+      <p class="muted">Updates: „Images laden“, anschließend „Start / Anwenden“. „Container entfernen“ behält persistente Daten. Ein App-Stopp stoppt die laufenden Projekte; beim App-Start werden sie fortgesetzt. Für HA-Backups diese App in der Sicherung auswählen.</p>
       <div id="message" role="status" aria-live="polite"></div>
       <div class="console-head"><h2>Ausgabe</h2><span id="job-status">Bereit</span></div>
       <pre id="output" tabindex="0">Erstelle ein Projekt oder wähle links ein vorhandenes aus.</pre>

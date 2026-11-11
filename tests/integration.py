@@ -36,6 +36,9 @@ def cleanup():
         docker('rm', '-f', *ids, check=False)
     docker('rm', '-f', PROXY_NAME, APP_NAME, check=False)
     docker('network', 'rm', 'cs_' + PROJECT + '_default', check=False)
+    volumes = docker('volume', 'ls', '-q', '--filter', 'label=com.docker.compose.project=cs_' + PROJECT).split()
+    if volumes:
+        docker('volume', 'rm', *volumes, check=False)
     docker('volume', 'rm', 'cs_' + PROJECT + '_kept', check=False)
     docker('network', 'rm', NETWORK, check=False)
 
@@ -72,6 +75,17 @@ ThreadingHTTPServer(('0.0.0.0', 8099), Proxy).serve_forever()
 token = ''
 
 
+def run_app(data):
+    trust = []
+    certificate = os.environ.get('CODEX_PROXY_CERT')
+    if certificate:
+        trust = ['--mount', f'type=bind,src={certificate},dst=/run/cloud-ca.pem,readonly',
+                 '-e', 'SSL_CERT_FILE=/run/cloud-ca.pem']
+    docker('run', '-d', '--name', APP_NAME, '--network', NETWORK, '--ip', '172.30.32.3',
+           '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly',
+           '--mount', f'type=bind,src={data},dst=/data', *trust, 'compose-studio:dev')
+
+
 def request(path='', body=None, authenticated=True):
     headers = {'X-Compose-Token': token} if authenticated else {}
     if body is not None:
@@ -103,9 +117,7 @@ def main():
     try:
         docker('pull', 'busybox:1.37.0')
         docker('network', 'create', '--subnet', '172.30.32.0/24', NETWORK)
-        docker('run', '-d', '--name', APP_NAME, '--network', NETWORK, '--ip', '172.30.32.3',
-               '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly',
-               '--mount', f'type=bind,src={DATA},dst=/data', 'compose-studio:dev')
+        run_app(DATA)
         docker('run', '-d', '--name', PROXY_NAME, '--network', NETWORK, '--ip', '172.30.32.2',
                '-p', '127.0.0.1:18099:8099', 'python:3.13-alpine3.22', 'python3', '-u', '-c', PROXY)
         for attempt in range(40):
@@ -143,10 +155,44 @@ def main():
         assert 'compose-log-ok' in action('logs')
         action('stop')
         action('restart')
+        # Mimic Supervisor's hot backup ordering, including the durable restart marker.
+        docker('exec', APP_NAME, 'python3', '/app/backups.py', 'pre')
+        assert docker('inspect', 'cs_' + PROJECT + '-writer-1', '--format', '{{.State.Running}}') == 'false'
+        try:
+            request('api/projects/' + PROJECT, {'compose': json.dumps(config), 'env': 'NOTE=changed'})
+            raise AssertionError('Writes must be blocked during a backup')
+        except urllib.error.HTTPError as error:
+            assert error.code == 409
+        backup_file = ROOT.parent / 'integration-ha-backup.tar.gz'
+        with backup_file.open('wb') as stream:
+            subprocess.run(['docker', 'exec', APP_NAME, 'tar', '-czpf', '-', '-C', '/data', '.'], stdout=stream, check=True)
+        docker('exec', APP_NAME, 'python3', '/app/backups.py', 'post')
+        assert docker('exec', 'cs_' + PROJECT + '-writer-1', 'cat', '/kept/marker') == 'durable'
+        print('PASS backup hooks stop writers, block edits, and resume projects', flush=True)
+        docker('exec', 'cs_' + PROJECT + '-writer-1', 'sh', '-c', 'echo later > /kept/marker')
+        runtime = json.loads(docker('exec', APP_NAME, 'cat', '/data/stacks/' + PROJECT + '/.studio-runtime.json'))
+        managed_volume = runtime['volumes']['kept']['name']
+        device = json.loads(docker('volume', 'inspect', managed_volume))[0]['Options']['device']
+        assert device.startswith(str(DATA / 'storage'))
         action('down')
-        assert docker('volume', 'inspect', 'cs_' + PROJECT + '_kept', '--format', '{{.Name}}')
+        assert docker('volume', 'inspect', managed_volume, '--format', '{{.Name}}')
         print('PASS named volume retained after down', flush=True)
-        docker('restart', APP_NAME)
+        # Restore the app backup onto a different host data path; old Docker
+        # volumes deliberately remain, so a stale path/name cannot pass this test.
+        docker('stop', '--time', '60', APP_NAME)
+        docker('rm', APP_NAME)
+        restored_data = ROOT.parent / 'integration-restored'
+        restored_data.mkdir(exist_ok=True)
+        docker('run', '--rm', '--network', 'none',
+              '--mount', f'type=bind,src={restored_data},dst=/restore',
+              '--entrypoint', 'python3', 'python:3.13-alpine3.22', '-c',
+              'from pathlib import Path; import shutil; '
+              '[(p.unlink() if p.is_symlink() or p.is_file() else shutil.rmtree(p)) for p in Path("/restore").iterdir()]')
+        with backup_file.open('rb') as stream:
+            subprocess.run(['docker', 'run', '--rm', '-i', '--network', 'none',
+                '--mount', f'type=bind,src={restored_data},dst=/restore',
+                '--entrypoint', 'tar', 'python:3.13-alpine3.22', '-xzpf', '-', '-C', '/restore'], stdin=stream, check=True)
+        run_app(restored_data)
         for attempt in range(40):
             try:
                 html = request(authenticated=False)
@@ -157,7 +203,12 @@ def main():
                 time.sleep(0.25)
         else:
             raise AssertionError('Persistence check failed')
-        print('PASS app restart and persistent project files', flush=True)
+        restored_runtime = json.loads(docker('exec', APP_NAME, 'cat', '/data/stacks/' + PROJECT + '/.studio-runtime.json'))
+        assert restored_runtime['volumes']['kept']['name'] != managed_volume
+        assert docker('exec', 'cs_' + PROJECT + '-writer-1', 'cat', '/kept/marker') == 'durable'
+        restored_mounts = json.loads(docker('inspect', 'cs_' + PROJECT + '-writer-1', '--format', '{{json .Mounts}}'))
+        assert next(m['Source'] for m in restored_mounts if m['Destination'] == '/result').startswith(str(restored_data))
+        print('PASS restore to a different data path: volume contents, bind files, .env, auto-resume', flush=True)
         if os.environ.get('KEEP_TEST_APP') == '1':
             print('Test app retained at ' + BASE, flush=True)
     finally:

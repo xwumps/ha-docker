@@ -5,9 +5,11 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import sys
 from unittest.mock import patch
 
 APP = Path(__file__).parents[1] / 'compose_studio' / 'app' / 'server.py'
+sys.path.insert(0, str(APP.parent))
 spec = importlib.util.spec_from_file_location('compose_studio', APP)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

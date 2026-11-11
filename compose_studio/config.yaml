@@ -1,5 +1,5 @@
 name: Compose Studio
-version: "0.1.0"
+version: "0.2.0"
 slug: compose_studio
 description: Docker Compose V2 Projekte mit YAML, Umgebungsvariablen und Logs verwalten
 url: https://github.com/xwumps/ha-docker/tree/main/compose_studio
@@ -16,6 +16,11 @@ panel_icon: mdi:docker
 panel_title: Compose Studio
 panel_admin: true
 docker_api: true
-timeout: 30
+timeout: 300
+breaking_versions:
+  - "0.2.0"
+backup: hot
+backup_pre: "python3 /app/backups.py pre"
+backup_post: "python3 /app/backups.py post"
 options: {}
 schema: {}
